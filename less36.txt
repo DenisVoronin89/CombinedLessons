@@ -1,0 +1,524 @@
+lesson.36 - config.py
+from os import getenv
+
+SQLALCHEMY_DATABASE_URI = getenv(
+    "SQLALCHEMY_DATABASE_URI",
+    "postgresql+psycopg2://username:passwd@localhost:5432/blog",
+)
+
+
+class Config:
+    DEBUG = False
+    TESTING = False
+    ENV = ""
+    SECRET_KEY = "qwert12e12y"
+    SQLALCHEMY_DATABASE_URI = SQLALCHEMY_DATABASE_URI
+    SQLALCHEMY_ECHO = False
+    WTF_CSRF_TIME_LIMIT = 600
+
+
+class ProductionConfig(Config):
+    ENV = "production"
+
+
+class DevelopmentConfig(Config):
+    ENV = "development"
+    DEBUG = True
+    SQLALCHEMY_ECHO = True
+
+
+class TestingConfig(Config):
+    ENV = "testing"
+    TESTING = True
+    SQLALCHEMY_ECHO = True
+
+lesson.36 - main.py
+import os
+
+from flask import Flask, request, render_template, flash
+from flask_migrate import Migrate
+from flask_wtf import CSRFProtect
+
+from models import db
+from views.items import items_app
+from views.products import products_app
+
+
+config_name = os.getenv("CONFIG_NAME", "DevelopmentConfig")
+
+app = Flask(__name__)
+app.config.from_object(f"config.{config_name}")
+app.register_blueprint(items_app)
+app.register_blueprint(products_app)
+
+db.init_app(app)
+migrate = Migrate(app=app, db=db)
+csrf = CSRFProtect(app)
+
+
+@app.cli.command("create-all")
+def command_create_all():
+    with app.app_context():
+        db.create_all()
+
+
+@app.get("/")
+def index_view():
+    # return "<h1>Hello Index!!</h1>"
+    features = ["Items", "Products (WIP)", "Hello views"]
+    return render_template("index.html", features=features)
+
+
+def print_request_info():
+    print(request)
+
+
+# @app.get("/hello-plain/")
+# def hello_plain_view():
+#     name = "World!"
+#     return f"Hello {name}"
+
+
+@app.get("/hello-plain/")
+@app.get("/hello/")
+def hello_view():
+    name = request.args.get("name", "")
+    name = name.strip()
+    if not name:
+        name = "World"
+
+    flash("Hello was flashed!")
+    # return f"<h1>Hello {name}!</h1>"
+    return render_template("hello.html", name=name)
+
+
+@app.get("/images/")
+@app.get("/images/<path:img_dir>/")
+def get_image(img_dir: str = "default/images/path"):
+    return {
+        "data": {
+            "image": "todo load",
+            "path": img_dir,
+        },
+    }
+
+
+if __name__ == "__main__":
+    app.run()
+
+lesson.36 - wsgi.py
+__all__ = ("app",)
+
+from main import app
+
+# Django:
+# fat models -> всю логику складывать в модели
+# thin views -> минимум логики в view функциях
+# stupid templates -> никакой логики в шаблонах
+
+migrations - env.py
+import logging
+from logging.config import fileConfig
+
+from flask import current_app
+
+from alembic import context
+
+# this is the Alembic Config object, which provides
+# access to the values within the .ini file in use.
+config = context.config
+
+# Interpret the config file for Python logging.
+# This line sets up loggers basically.
+fileConfig(config.config_file_name)
+logger = logging.getLogger('alembic.env')
+
+
+def get_engine():
+    try:
+        # this works with Flask-SQLAlchemy<3 and Alchemical
+        return current_app.extensions['migrate'].db.get_engine()
+    except TypeError:
+        # this works with Flask-SQLAlchemy>=3
+        return current_app.extensions['migrate'].db.engine
+
+
+def get_engine_url():
+    try:
+        return get_engine().url.render_as_string(hide_password=False).replace(
+            '%', '%%')
+    except AttributeError:
+        return str(get_engine().url).replace('%', '%%')
+
+
+# add your model's MetaData object here
+# for 'autogenerate' support
+# from myapp import mymodel
+# target_metadata = mymodel.Base.metadata
+config.set_main_option('sqlalchemy.url', get_engine_url())
+target_db = current_app.extensions['migrate'].db
+
+# other values from the config, defined by the needs of env.py,
+# can be acquired:
+# my_important_option = config.get_main_option("my_important_option")
+# ... etc.
+
+
+def get_metadata():
+    if hasattr(target_db, 'metadatas'):
+        return target_db.metadatas[None]
+    return target_db.metadata
+
+
+def run_migrations_offline():
+    """Run migrations in 'offline' mode.
+
+    This configures the context with just a URL
+    and not an Engine, though an Engine is acceptable
+    here as well.  By skipping the Engine creation
+    we don't even need a DBAPI to be available.
+
+    Calls to context.execute() here emit the given string to the
+    script output.
+
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    context.configure(
+        url=url, target_metadata=get_metadata(), literal_binds=True
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online():
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+
+    # this callback is used to prevent an auto-migration from being generated
+    # when there are no changes to the schema
+    # reference: http://alembic.zzzcomputing.com/en/latest/cookbook.html
+    def process_revision_directives(context, revision, directives):
+        if getattr(config.cmd_opts, 'autogenerate', False):
+            script = directives[0]
+            if script.upgrade_ops.is_empty():
+                directives[:] = []
+                logger.info('No changes in schema detected.')
+
+    connectable = get_engine()
+
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=get_metadata(),
+            process_revision_directives=process_revision_directives,
+            **current_app.extensions['migrate'].configure_args
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+
+versions - e0583f415c86_create_products_table.py
+"""create products table
+
+Revision ID: e0583f415c86
+Revises: 
+Create Date: 2023-03-01 20:43:32.733868
+
+"""
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision = "e0583f415c86"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.create_table(
+        "product",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("name", sa.String(length=50), nullable=False),
+        sa.Column(
+            "short_description",
+            sa.String(length=200),
+            server_default="",
+            nullable=False,
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    # ### end Alembic commands ###
+
+
+def downgrade():
+    # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table("product")
+    # ### end Alembic commands ###
+
+models - database.py
+__all__ = ("db",)
+
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()
+
+models - __init__.py
+__all__ = (
+    "db",
+    "Product",
+)
+
+from .database import db
+from .product import Product
+
+models - product.py
+from typing import TYPE_CHECKING, Type
+
+from sqlalchemy import Column, String, Integer
+
+from .database import db
+
+
+class Product(db.Model):
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), nullable=False)
+    short_description = Column(
+        String(200),
+        nullable=False,
+        default="",
+        server_default="",
+    )
+
+    # if TYPE_CHECKING:
+    #     query: Query
+
+
+if TYPE_CHECKING:
+    from flask_sqlalchemy.model import Model
+
+    Product: Type[Model]
+
+views - __init__.py
+
+views - products.py
+from http import HTTPStatus
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash
+from sqlalchemy import or_
+from werkzeug.exceptions import NotFound
+
+from .forms import ProductForm
+from models import db, Product
+
+products_app = Blueprint(
+    "products_app",
+    __name__,
+    url_prefix="/products",
+)
+
+# short_description = f"Product #{product.id} ({product.name}) short description"
+
+
+@products_app.get("/", endpoint="list")
+def get_products():
+    # products = db.session.query(Product).all()
+    search = request.args.get("search") or ""
+    query = Product.query
+    if search:
+        query = query.filter(
+            or_(
+                Product.name.ilike(f"%{search}%"),
+                Product.short_description.ilike(f"%{search}%"),
+            ),
+        )
+    products = query.order_by(Product.id).all()
+
+    return render_template(
+        "products/list.html",
+        products=products,
+        search=search,
+    )
+
+
+def get_product_or_raise(product_id: int) -> Product:
+    return Product.query.filter_by(id=product_id).one_or_404(
+        description=f"Product #{product_id} not found!",
+    )
+
+
+@products_app.get("/<int:product_id>/", endpoint="details")
+def get_product_details(product_id: int):
+    product = get_product_or_raise(product_id)
+    return render_template("products/details.html", product=product)
+
+
+@products_app.route(
+    "/<int:product_id>/update/",
+    methods=["GET", "POST"],
+    endpoint="update",
+)
+def update_product_details(product_id: int):
+    product = get_product_or_raise(product_id)
+    form = ProductForm()
+    if request.method == "GET":
+        return render_template(
+            "products/update.html",
+            form=form,
+            product=product,
+        )
+
+    if not form.validate_on_submit():
+        return (
+            render_template(
+                "products/update.html",
+                form=form,
+                product=product,
+            ),
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    # Product.query.filter_by(id=product_id).update(
+    #     {
+    #         "name": form.data["name"],
+    #         "short_description": form.data["short_description"],
+    #     }
+    # )
+    product.name = form.data["name"]
+    product.short_description = form.data["short_description"]
+    db.session.add(product)
+    db.session.commit()
+    flash(f"Product #{product.id} was updated!", category="info")
+    url = url_for("products_app.details", product_id=product.id)
+    return redirect(url)
+
+
+@products_app.route(
+    "/<int:product_id>/delete/",
+    methods=["GET", "POST"],
+    endpoint="delete",
+)
+def delete_product(product_id: int):
+    product = get_product_or_raise(product_id)
+
+    if request.method == "GET":
+        return render_template("products/delete.html", product=product)
+
+    product_name = product.name
+    db.session.delete(product)
+    db.session.commit()
+    flash(f"Deleted product {product_name}!", category="warning")
+    url = url_for("products_app.list")
+    return redirect(url)
+
+
+@products_app.route("/create/", methods=["GET", "POST"], endpoint="create")
+def create_product():
+    form = ProductForm()
+    if request.method == "GET":
+        return render_template("products/create.html", form=form)
+
+    if not form.validate_on_submit():
+        return (
+            render_template("products/create.html", form=form),
+            HTTPStatus.BAD_REQUEST,
+        )
+
+    product = Product(
+        name=form.data["name"],
+        short_description=form.data["short_description"],
+    )
+    db.session.add(product)
+    db.session.commit()
+    flash(f"Product {product.name} was created!", category="success")
+    url = url_for("products_app.details", product_id=product.id)
+    return redirect(url)
+
+views - items.py
+from flask import Blueprint
+
+items_app = Blueprint(
+    "items_app",
+    __name__,
+    url_prefix="/items",
+)
+
+
+@items_app.get("/")
+def get_items_list():
+    return {
+        "data": [
+            {
+                "id": 1,
+                "name": "I1",
+            },
+            {
+                "id": 2,
+                "name": "I2",
+            },
+        ],
+    }
+
+
+# @items_app.get("/<int:item_id>/")
+# def get_item_by_id_int(item_id: int):
+#     return {
+#         "data": {
+#             "id": item_id,
+#             "name": f"I{item_id}",
+#             "comment": "integer id",
+#         },
+#     }
+
+
+@items_app.get("/<int:item_id>/")
+@items_app.get("/<string:item_id>/")
+def get_item_by_id_str(item_id: str):
+    return {
+        "data": {
+            # "id": item_id.upper(),
+            "id": item_id,
+            "name": f"I{item_id}",
+            "comment": "some id",
+            "type": str(type(item_id)),
+        },
+    }
+
+forms - __init__.py
+__all__ = ("ProductForm",)
+
+from .products import ProductForm
+
+forms - products.py
+from flask_wtf import FlaskForm
+from wtforms import StringField
+from wtforms.validators import DataRequired, Length
+
+
+class ProductForm(FlaskForm):
+    name = StringField(
+        label="Product name",
+        validators=[
+            DataRequired(),
+            Length(min=3),
+        ],
+        render_kw={"placeholder": "Desktop"},
+    )
+    short_description = StringField(
+        "Short description",
+        validators=[DataRequired()],
+    )
+
